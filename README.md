@@ -1,5 +1,7 @@
 # Coil: NumPy Snake
 
+[Open the live laboratory](https://aditya2375.github.io/coil-snake/)
+
 A small Double DQN learned from scratch in NumPy, with a browser laboratory that runs the exported weights locally. Watch the network, inspect its observations and Q-values, compare the random baseline, or play yourself.
 
 ## What is real
