@@ -1,39 +1,63 @@
-# Coil: NumPy Snake
+# Coil
 
 [Open the live laboratory](https://aditya2375.github.io/coil-snake/)
 
-A small Double DQN learned from scratch in NumPy, with a browser laboratory that runs the exported weights locally. Watch the network, inspect its observations and Q-values, compare the random baseline, or play yourself.
+A working NumPy Snake learning laboratory. The original Double DQN remains intact as a baseline. Version 2 adds a board-aware imitation policy, an explicitly classical teacher, honest held-out comparisons, position inspection, counterfactual paths and a browser tournament.
 
-## What is real
-- NumPy forward/backward pass, Huber loss, Adam, replay memory and target network.
-- 2,400 seeded training episodes on an 8×8 board.
-- 100 held-out evaluation seeds: mean food **15.34**, median **15.5**, best **27**. Uniform-random baseline mean **0.06**.
-- Python and browser environment/inference agree on all 100 evaluation scores.
-- No action masking, heuristic rescue, remote model API, account, tracking, or GPU requirement.
+## Run
 
-## Limits
-The network sees 11 engineered binary features, not pixels or the complete board. It cannot reliably reason about body traps. Reward includes a small distance-shaping term. Scores apply to this particular board, reward and move-limit configuration, not to every Snake implementation. Watching does not train or change the checkpoint.
+```sh
+python -m http.server 8000
+# Open http://localhost:8000
+```
 
-## Reproduce
-Python 3.10+ and NumPy. A CPU is sufficient.
+All inference runs in the browser, with local exported weights. No accounts, API keys, analytics, storage, uploads or remote inference. Network access is only same-origin static assets. A worker runs tournaments off the UI thread. Stop retains completed games. CSV exports have fixed numeric columns, not user-supplied formulas.
+
+## What is learned
+
+- v1: original NumPy Double DQN, 11 features → 64 ReLU → 3 Q values, 963 parameters.
+- v2: NumPy behavior cloning + DAgger-style dataset aggregation, 203 inputs → 128 ReLU → 64 ReLU → 3 logits, 34,563 parameters.
+- Inputs: original 11 features plus 8×8 head, food and body-release-order channels. Release order is (length − segment index)/64, not a future-state oracle.
+- Classical teacher: one-step legal actions, flood-fill reachability with departing tail free, tail reachability and space, then food distance. It is an imperfect heuristic, not a neural model or proof of safety.
+- Neural inference uses raw argmax, never teacher rescue or legal-action masking.
+
+## Frozen held-out evidence
+
+All policies use the same 8×8 environment, 100-move starvation limit and 1,500-move episode limit. The 1,000 final test seeds are 40000–40999, disjoint from training and development.
+
+| Policy | Mean food |
+|---|---:|
+| Board-aware neural | 19.563 |
+| Original Double DQN | 15.799 |
+| Classical teacher | 45.301 |
+
+Paired gain: 3.764 food, 95% paired bootstrap interval [3.295, 4.240], 10,000 resamples, seed 172. Better on 639 seeds, tied on 111, worse on 250. The board-aware network fills the board on 0/1000 seeds; the teacher on 3/1000. The interval conditions on fixed trained checkpoints and does not represent training-seed uncertainty. Pairing uses a common seed and generator, not identical food locations: each policy's body changes the free-cell list.
+
+Three candidates were initialized with seeds 121, 122, 123. Final development means on seeds 32000–32199 were 19.520, 18.870, 19.985. Seed 123 was selected before the final test. Seeds 31000–31039 monitored rounds, without checkpoint selection.
+
+## Reproduce and verify
 
 ```sh
 python -m pip install -r requirements.txt
-python snake.py --episodes 2400 --out model.json
+OPENBLAS_NUM_THREADS=1 python upgrade.py --games 600 --updates 6000
+OPENBLAS_NUM_THREADS=1 python refine.py
 python -m unittest -v
-python -m http.server 8000
+node test_advanced.cjs
 ```
 
-Open `http://localhost:8000` for development. The hosted browser app needs no installation.
+`upgrade.py` creates the initial demonstration set (600 games, seeds 500000–500599, 4% random exploratory actions). Its initial network is a preliminary experiment; `refine.py` initializes all three final candidates afresh. Each receives six rounds of 3,500 Adam updates (batch 256, learning rate 0.0006). Between the first five rounds, 140 learner-state games collect teacher labels, with 15% of executed training moves from the teacher. DAgger game seed = 600000 + candidate_seed×10000 + zero_based_round×1000 + game. Replay retains the latest 100,000 positions. This truncation and fixed teacher mixture make it a DAgger-style implementation, not a literal paper reproduction.
 
-`model.json` includes weights, full training history, seed list and every evaluation score. `snake.py` implements training; `engine.js` mirrors the environment and inference. Seeded food generation uses the same 32-bit LCG in both languages. Model initialization and training use seed 731, while training environment seeds start at 100. Evaluation seeds 20000–20099 are separate. Floating-point and NumPy-version differences may change a retrained policy.
+`refine.py` saves all candidates in `board-candidates.json` before evaluation. If interrupted after training, `python final_evaluate.py` completes evaluation from that file. Both paths generate the same paired summary via `report.py`. NumPy/BLAS differences may change retraining results. The shipped checkpoint is frozen. `test_advanced.cjs` checks Python/JavaScript fixture logits, all 1,000 neural game scores, 100 teacher scores and clone/rollout invariants. Python tests check environment rules, feature encoding, legal teacher behavior, numerical cross-entropy gradients, parameter count, model selection and bootstrap statistics.
 
-## Method
-The network is 11 → 64 (ReLU) → 3, 963 parameters. Relative actions: straight, right, left. Double DQN, replay memory 30,000, batch 64 every four environment steps, target sync every 400 steps, Adam 0.001, discount 0.95. Epsilon decreases linearly to 0.04 over the first 70% of episodes.
+## Inspection limits
 
-Reward: +10 food; −10 collision/timeout; −0.03 per step; ±0.08 distance shaping. Stop at 100 steps without food, 1,500 total steps, collision or a full board. Moving into the departing tail is legal. Food collected on exactly the total move limit still earns +10, then the episode ends. Greedy action selection uses the first maximum (straight, then right, then left) when Q-values tie.
+Counterfactual overlays clone the exact current state and RNG, force one initial move, then follow the selected policy for up to 12 moves. They stop on the first food or terminal state, never using future food spawns to choose a path. Overlapping dashed paths are possibilities, not guarantees. In human mode, the inspector and branch continuation use the board-aware policy, not a prediction of human intent.
 
-Reference: [Human-level control through deep reinforcement learning, Mnih et al. (2015)](https://www.nature.com/articles/nature14236). This compact engineered-feature experiment is not a reproduction of the Atari paper.
+Hidden activation brightness is normalized separately per layer. Logits and Q values are not probabilities. This is a small educational benchmark, not evidence of general game intelligence. The neural policy still falls into traps and loses to the classical teacher.
 
-## Privacy and security
-Static HTML, CSS and JavaScript. The model is fetched from the same origin. No uploads, cookies, analytics, user accounts, storage or secrets. All displayed interactive values use text nodes. Run your own review before extending it to accept untrusted checkpoints or uploaded code.
+## Sources
+
+- [DQN, Mnih et al.](https://www.nature.com/articles/nature14236)
+- [DAgger, Ross, Gordon and Bagnell](https://proceedings.mlr.press/v15/ross11a.html)
+
+No external Snake dataset is used. Training trajectories are generated by the included environment.
